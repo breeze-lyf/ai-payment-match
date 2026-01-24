@@ -1,0 +1,15 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+
+# Project specific
+output/
+data/*.db
+data/bank_pdf/
+sheets_for_test/
+
+# OS
+.DS_Store
