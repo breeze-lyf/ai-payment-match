@@ -8,6 +8,17 @@ from matcher import CascadeMatcher
 from database import DatabaseManager
 from datetime import datetime
 import io
+import subprocess
+
+# --- 版本信息 ---
+VERSION = "v2.1.0"  # 手动版本号
+try:
+    # 尝试获取 Git commit hash（前 7 位）
+    git_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], 
+                                       cwd=os.path.dirname(__file__)).decode('utf-8').strip()
+    VERSION_INFO = f"{VERSION} ({git_hash})"
+except:
+    VERSION_INFO = VERSION
 
 # --- 页面配置 ---
 st.set_page_config(page_title="PayMatch Reconcile", layout="wide")
@@ -39,6 +50,9 @@ with st.sidebar:
     if st.button("⚙️ 系统设置"):
         st.session_state['menu_selection'] = "系统设置"
         st.rerun() if 'menu_selection' in st.session_state else None
+    
+    # 版本号显示
+    st.caption(f"🏷️ 版本: {VERSION_INFO}")
     
     # 处理系统设置的特殊跳转
     current_menu = st.session_state.get('menu_selection', menu)
