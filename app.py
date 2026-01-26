@@ -96,12 +96,27 @@ def parse_payroll_excel(uploaded_file):
     if 'sys_name' not in df_mapped.columns or 'sys_amount' not in df_mapped.columns:
         return None, f"文件 {filename} 缺少关键列"
     
+    # --- 数据清洗：过滤空行和汇总行 ---
+    # 1. 删除"姓名"为空的行
+    df_mapped = df_mapped[df_mapped['sys_name'].notna()]
+    df_mapped = df_mapped[df_mapped['sys_name'].astype(str).str.strip() != '']
+    
+    # 2. 删除包含"合计"、"小计"、"总计"等关键字的行
+    summary_keywords = ['合计', '小计', '总计', '汇总', '总额', '共计']
+    mask = df_mapped['sys_name'].astype(str).str.contains('|'.join(summary_keywords), case=False, na=False)
+    df_mapped = df_mapped[~mask]
+    
+    # 3. 填充字段并清洗金额
     df_mapped['month'] = file_month
     df_mapped['sys_dept'] = file_dept
     df_mapped['sys_amount'] = pd.to_numeric(df_mapped['sys_amount'], errors='coerce').fillna(0).round(2)
     
+    # 4. 再次过滤金额为 0 或异常大的数据（可能是误读的汇总行）
+    df_mapped = df_mapped[df_mapped['sys_amount'] > 0]
+    df_mapped = df_mapped[df_mapped['sys_amount'] < 500000]  # 单人实发通常不超过 50 万
+    
     cols = [c for c in ['month', 'sys_name', 'sys_id', 'sys_amount', 'sys_dept', 'sys_id_card'] if c in df_mapped.columns]
-    return df_mapped[cols], None
+    return df_mapped[cols].reset_index(drop=True), None
 
 # --- 页面逻辑分发 ---
 
