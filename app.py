@@ -73,22 +73,44 @@ def parse_payroll_excel(uploaded_file):
         if first_name.lower() in ['name', '姓名']:
             df_raw = df_raw.iloc[1:].reset_index(drop=True)
 
+    # 优先精确匹配，再进行模糊匹配（避免误读相似列）
     mapping = {
         '姓名': 'sys_name', 
         '工号': 'sys_id', 
-        '员工实发合计': 'sys_amount', 
-        '实发金额': 'sys_amount',
-        '实发合计': 'sys_amount',
         '部门': 'sys_dept',
         '身份证号': 'sys_id_card'
     }
     
+    # 金额列单独处理（优先级从高到低）
+    amount_candidates = [
+        '员工实发合计',      # 最高优先级
+        'After-tax total Income',
+        '实发合计',
+        '员工实发',
+        '实发金额',
+        '实发工资'
+    ]
+    
     rename_dict = {}
+    amount_col_found = False
+    
+    # 第一步：精确匹配基础列
     for col in df_raw.columns:
-        col_str = str(col).replace('\n', '').strip()
+        col_str = str(col).replace('\n', '').replace(' ', '').strip()
         for k, v in mapping.items():
-            if k in col_str:
+            if k == col_str or k in col_str:
                 rename_dict[col] = v
+                break
+    
+    # 第二步：精确匹配金额列（按优先级）
+    for candidate in amount_candidates:
+        if amount_col_found:
+            break
+        for col in df_raw.columns:
+            col_str = str(col).replace('\n', '').replace(' ', '').strip()
+            if candidate in col_str:
+                rename_dict[col] = 'sys_amount'
+                amount_col_found = True
                 break
     
     df_mapped = df_raw.rename(columns=rename_dict)
