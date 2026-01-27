@@ -95,15 +95,19 @@ def parse_payroll_excel(uploaded_file):
         '身份证号': 'sys_id_card'
     }
     
-    # 金额列单独处理（优先级从高到低）
+    # 金额列单独处理（优先级从高到低，使用精确匹配）
     amount_candidates = [
-        '员工实发合计',      # 最高优先级
-        'After-tax total Income',
+        '员工实发合计',                  # 最高优先级（精确匹配）
+        'After-taxtotalIncome',        # 英文列名（去空格）
+        'After-tax total Income',      # 带空格版本
         '实发合计',
         '员工实发',
         '实发金额',
         '实发工资'
     ]
+    
+    # 排除干扰列（这些列虽然包含关键字，但不是我们要的）
+    exclude_keywords = ['五险一金', '个人所得税', '社保', '公积金', '税前', '税后增加', '税后扣减']
     
     rename_dict = {}
     amount_col_found = False
@@ -116,13 +120,20 @@ def parse_payroll_excel(uploaded_file):
                 rename_dict[col] = v
                 break
     
-    # 第二步：精确匹配金额列（按优先级）
+    # 第二步：精确匹配金额列（排除干扰列）
     for candidate in amount_candidates:
         if amount_col_found:
             break
         for col in df_raw.columns:
             col_str = str(col).replace('\n', '').replace(' ', '').strip()
-            if candidate in col_str:
+            
+            # 先检查是否是干扰列
+            is_excluded = any(exc in col_str for exc in exclude_keywords)
+            if is_excluded:
+                continue
+            
+            # 精确匹配或包含匹配
+            if candidate == col_str or candidate in col_str:
                 rename_dict[col] = 'sys_amount'
                 amount_col_found = True
                 break
