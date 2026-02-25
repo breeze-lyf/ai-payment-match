@@ -1,6 +1,10 @@
 import pandas as pd
 import numpy as np
 from typing import Tuple
+from logger_config import setup_logger
+
+# 初始化日志记录器
+logger = setup_logger("matcher")
 
 class CascadeMatcher:
     def __init__(self, df_master: pd.DataFrame, epsilon: float = 0.01):
@@ -135,4 +139,4 @@ if __name__ == "__main__":
     
     matcher = CascadeMatcher(df_sys)
     result = matcher.match(df_bank)
-    print(result[['bank_name', 'bank_amount', 'sys_amount', 'match_status', 'diff_val']])
+    logger.info(result[['bank_name', 'bank_amount', 'sys_amount', 'match_status', 'diff_val']])

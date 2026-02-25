@@ -2,6 +2,10 @@ import sqlite3
 import os
 import pandas as pd
 from datetime import datetime
+from logger_config import setup_logger
+
+# 初始化日志记录器
+logger = setup_logger("database")
 
 class DatabaseManager:
     def __init__(self, db_path="data/paymatch.db"):

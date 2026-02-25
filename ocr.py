@@ -12,8 +12,12 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from logger_config import setup_logger
 
 load_dotenv()
+
+# 初始化日志记录器
+logger = setup_logger("ocr")
 
 class OCRValidationError(Exception):
     """OCR 校验失败异常"""
@@ -97,20 +101,20 @@ class AIPDFExtractor:
                         r['bank_page'] = page_num
                     return rows
                 else:
-                    print(f"⚠️ 第 {page_num} 页未找到 JSON 结构。")
+                    logger.warning(f"⚠️ 第 {page_num} 页未找到 JSON 结构。")
                     return []
             except Exception as e:
                 error_msg = str(e)
                 if "429" in error_msg:
                     wait_time = (attempt + 1) * 5 
-                    print(f"⏳ 第 {page_num} 页触发速率限制 (429)，正在进行第 {attempt+1} 次重试，等待 {wait_time}s...")
+                    logger.warning(f"⏳ 第 {page_num} 页触发速率限制 (429)，正在进行第 {attempt+1} 次重试，等待 {wait_time}s...")
                     time.sleep(wait_time)
                     continue
                 else:
-                    print(f"❌ 第 {page_num} 页解析失败: {error_msg}")
+                    logger.error(f"❌ 第 {page_num} 页解析失败: {error_msg}")
                     return []
         
-        print(f"❌ 第 {page_num} 页在重试 {max_retries} 次后仍然失败。")
+        logger.error(f"❌ 第 {page_num} 页在重试 {max_retries} 次后仍然失败。")
         return []
 
     def is_electronic_pdf(self, pdf_path: str) -> bool:
@@ -166,7 +170,7 @@ class AIPDFExtractor:
                 # 如果代码运行到这里，说明解析出的内容有问题，触发重试
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 2
-                    print(f"🔄 第 {page_num} 页解析内容无效，正在进行第 {attempt+1} 次重试...")
+                    logger.warning(f"🔄 第 {page_num} 页解析内容无效，正在进行第 {attempt+1} 次重试...")
                     time.sleep(wait_time)
                     continue
 
@@ -174,11 +178,11 @@ class AIPDFExtractor:
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 2
                     error_type = "速率限制" if "429" in str(e) else "网络错误"
-                    print(f"⏳ 第 {page_num} 页触发{error_type}，等待 {wait_time}s 后重试...")
+                    logger.warning(f"⏳ 第 {page_num} 页触发{error_type}，等待 {wait_time}s 后重试...")
                     time.sleep(wait_time)
                     continue
                 else:
-                    print(f"❌ 第 {page_num} 页文本解析彻底失败: {e}")
+                    logger.error(f"❌ 第 {page_num} 页文本解析彻底失败: {e}")
                     return []
         return []
 
@@ -197,7 +201,7 @@ class AIPDFExtractor:
                 month = file_date
 
         is_elec = self.is_electronic_pdf(pdf_path)
-        print(f"🔍 检测到 PDF 类型: {'电子版 (原生)' if is_elec else '扫描版 (图片)'}")
+        logger.info(f"🔍 检测到 PDF 类型: {'电子版 (原生)' if is_elec else '扫描版 (图片)'}")
         
         total_pages = 0
         page_results = {}
@@ -209,7 +213,7 @@ class AIPDFExtractor:
                 total_pages = len(pdf.pages)
                 # 电子版使用更高并发（DeepSeek-V3 TPM=100k），若 max_workers < 5，自动提升为 8
                 actual_workers = max(max_workers, 8) if max_workers < 10 else max_workers
-                print(f"🚀 开始并发解析 {total_pages} 页电子版 PDF，使用 DeepSeek-V3 (并发数: {actual_workers})...")
+                logger.info(f"🚀 开始并发解析 {total_pages} 页电子版 PDF，使用 DeepSeek-V3 (并发数: {actual_workers})...")
                 
                 with ThreadPoolExecutor(max_workers=actual_workers) as executor:
                     future_to_page = {
@@ -221,9 +225,9 @@ class AIPDFExtractor:
                         page_num = future_to_page[future]
                         rows = future.result()
                         page_results[page_num] = rows
-                        print(f"✅ 第 {page_num} 页解析完成 (电子版，提取到 {len(rows)} 条)")
+                        logger.info(f"✅ 第 {page_num} 页解析完成 (电子版，提取到 {len(rows)} 条)")
                         if verbose and rows:
-                            for r in rows[:2]: print(f"   - {r.get('name')}: {r.get('amount')}")
+                            for r in rows[:2]: logger.info(f"   - {r.get('name')}: {r.get('amount')}")
                         
                         if progress_bar: progress_bar.progress(len(page_results)/total_pages)
         else:
@@ -239,7 +243,7 @@ class AIPDFExtractor:
             elif "GLM" in self.model_id and max_workers > 3:
                 actual_workers = 3
             
-            print(f"🚀 开始并发解析 {total_pages} 页扫描版 PDF，使用 {self.model_id} (并发数: {actual_workers})...")
+            logger.info(f"🚀 开始并发解析 {total_pages} 页扫描版 PDF，使用 {self.model_id} (并发数: {actual_workers})...")
             
             with ThreadPoolExecutor(max_workers=actual_workers) as executor:
                 future_to_page = {
@@ -251,9 +255,9 @@ class AIPDFExtractor:
                     page_num = future_to_page[future]
                     rows = future.result() or []
                     page_results[page_num] = rows
-                    print(f"✅ 第 {page_num} 页解析完成 (扫描版，提取到 {len(rows)} 条)")
+                    logger.info(f"✅ 第 {page_num} 页解析完成 (扫描版，提取到 {len(rows)} 条)")
                     if verbose and rows:
-                        for r in rows[:2]: print(f"   - {r.get('name')}: {r.get('amount')}")
+                        for r in rows[:2]: logger.info(f"   - {r.get('name')}: {r.get('amount')}")
                     
                     if progress_bar: progress_bar.progress(len(page_results)/total_pages)
         
@@ -269,8 +273,8 @@ class AIPDFExtractor:
             all_rows.extend(rows)
         
         if failed_pages:
-            print(f"\n⚠️ 任务完成，但以下页面未能提取到任何数据: {failed_pages}")
-            print("💡 建议：请检查这些页面是否为空白页、汇总页，或者尝试手动处理。")
+            logger.warning(f"\n⚠️ 任务完成，但以下页面未能提取到任何数据: {failed_pages}")
+            logger.info("💡 建议：请检查这些页面是否为空白页、汇总页，或者尝试手动处理。")
         
         if not all_rows:
             return pd.DataFrame(columns=['month', 'bank_name', 'bank_amount', 'bank_account_no', 'bank_page', 'pdf_date'])

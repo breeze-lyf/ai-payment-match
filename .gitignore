@@ -10,6 +10,7 @@ output/
 data/*.db
 data/bank_pdf/
 sheets_for_test/
+1.2504-2512（全账单）/
 
 # OS
 .DS_Store

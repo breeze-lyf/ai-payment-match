@@ -1,0 +1,17 @@
+[server]
+# 增加上传文件大小限制为 500MB
+maxUploadSize = 500
+
+# 启用 CORS，解决跨域问题
+enableCORS = true
+
+# 启用 XSRF 保护
+enableXsrfProtection = false
+
+[browser]
+# 允许从任何 IP 访问
+gatherUsageStats = false
+
+[runner]
+# 自动重载
+fastReruns = true

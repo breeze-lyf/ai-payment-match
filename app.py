@@ -9,6 +9,10 @@ from database import DatabaseManager
 from datetime import datetime
 import io
 import subprocess
+from logger_config import setup_logger
+
+# 初始化日志记录器
+logger = setup_logger("app")
 
 # --- 版本信息 ---
 VERSION = "v2.1.0"  # 手动版本号
@@ -63,28 +67,44 @@ with st.sidebar:
 
 # --- 共享工具函数 ---
 def parse_payroll_excel(uploaded_file, debug=False):
-    """解析单个发薪 Excel，自动提取年月和片区"""
+    """解析单个发薪 Excel，保留所有原始字段，添加数据来源和年月份"""
     filename = uploaded_file.name
     debug_info = {}
     
     # 1. 提取月份
     file_month = "Unknown"
+    # 尝试匹配 202508 格式 (6位数字)
     month_match = re.search(r'(20\d{4})', filename)
     if month_match:
         raw_month = month_match.group(0)
         file_month = f"{raw_month[:4]}-{raw_month[4:]}"
+    else:
+        # 尝试匹配 2508 格式 (4位数字，前2位是年份后2位，后2位是月份)
+        month_match = re.search(r'(\d{2})(\d{2})', filename)
+        if month_match:
+            year_short = month_match.group(1)
+            month = month_match.group(2)
+            # 假设 25 表示 2025，如果小于 50 则认为是 20xx，否则是 19xx
+            if int(year_short) < 50:
+                file_month = f"20{year_short}-{month}"
+            else:
+                file_month = f"19{year_short}-{month}"
     
-    # 2. 提取片区
-    file_dept = "未知片区"
-    if '-' in filename:
-        parts = filename.split('-')
-        if len(parts) >= 2:
-            file_dept = parts[1].strip()
+    # 读取 Excel，指定长数字字段为字符串类型以避免科学计数法
+    df_raw = pd.read_excel(uploaded_file, dtype={
+        '身份证号': str, 
+        '外包人员本地编码': str,
+        '银行卡号': str,
+        '账号': str
+    })
     
-    df_raw = pd.read_excel(uploaded_file)
+    # 过滤掉 Unnamed 列（空白列）
+    unnamed_cols = [col for col in df_raw.columns if str(col).startswith('Unnamed')]
+    if unnamed_cols:
+        df_raw = df_raw.drop(columns=unnamed_cols)
     
     if debug:
-        debug_info['原始列名(前20个)'] = [repr(col) for col in list(df_raw.columns)[:20]]
+        debug_info['原始列名'] = [repr(col) for col in list(df_raw.columns)]
     
     # 过滤对照行（英文表头行）- 更健壮的检测
     if not df_raw.empty:
@@ -99,114 +119,34 @@ def parse_payroll_excel(uploaded_file, debug=False):
             df_raw = df_raw.iloc[1:].reset_index(drop=True)
             if debug:
                 debug_info['已跳过英文表头行'] = True
-
-    # 基础列映射
-    mapping = {
-        '姓名': 'sys_name', 
-        '工号': 'sys_id', 
-        '部门': 'sys_dept',
-        '身份证号': 'sys_id_card'
-    }
     
-    rename_dict = {}
-    
-    # 第一步：匹配基础列
+    # 查找姓名列（用于数据清洗，可选）
+    name_col = None
     for col in df_raw.columns:
         col_str = str(col).replace('\n', '').replace(' ', '').strip()
-        for k, v in mapping.items():
-            if k in col_str and v not in rename_dict.values():
-                rename_dict[col] = v
-                break
-    
-    # 第二步：精确查找金额列（核心逻辑重写！）
-    # 策略：从后往前遍历列，因为"员工实发合计"通常在表格最后部分
-    amount_col = None
-    amount_col_name = None
-    
-    # 收集所有包含"实发"的列（用于调试）
-    shifa_cols = []
-    for col in df_raw.columns:
-        col_str = str(col).replace('\n', '').replace(' ', '').strip()
-        if '实发' in col_str:
-            shifa_cols.append((col, col_str))
-    
-    if debug:
-        debug_info['所有包含"实发"的列'] = [f"{repr(c[0])} -> {c[1]}" for c in shifa_cols]
-    
-    # 排除干扰列的关键字
-    exclude_keywords = ['五险一金', '个人所得税', '社保', '公积金', '税前', '税后增', '税后扣', '企业', 'Employer', '代发']
-    
-    # 从包含"实发"的列中，找到"员工实发合计"（精确匹配优先）
-    for col, col_str in shifa_cols:
-        # 检查是否是干扰列
-        is_excluded = any(exc in col_str for exc in exclude_keywords)
-        if is_excluded:
-            continue
-        
-        # 精确匹配：列名以"员工实发合计"开头
-        if col_str.startswith('员工实发合计'):
-            amount_col = col
-            amount_col_name = col_str
+        if '姓名' in col_str:
+            name_col = col
             break
     
-    # 如果精确匹配失败，尝试匹配"实发合计"
-    if amount_col is None:
-        for col, col_str in shifa_cols:
-            is_excluded = any(exc in col_str for exc in exclude_keywords)
-            if is_excluded:
-                continue
-            if '实发合计' in col_str:
-                amount_col = col
-                amount_col_name = col_str
-                break
-    
-    # 如果还是没找到，尝试匹配英文 "After-tax total Income"
-    if amount_col is None:
-        for col in df_raw.columns:
-            col_str = str(col).replace('\n', '').replace(' ', '').strip()
-            if 'After-taxtotalIncome' in col_str or 'After-tax total Income' in col_str:
-                amount_col = col
-                amount_col_name = col_str
-                break
-    
-    if amount_col:
-        rename_dict[amount_col] = 'sys_amount'
-    
-    if debug:
-        debug_info['最终匹配的金额列'] = amount_col_name if amount_col_name else "未找到！"
-        debug_info['金额列原始名'] = repr(amount_col) if amount_col else "未找到"
-    
-    df_mapped = df_raw.rename(columns=rename_dict)
-    
-    if 'sys_name' not in df_mapped.columns or 'sys_amount' not in df_mapped.columns:
-        if debug:
-            return None, f"文件 {filename} 缺少关键列", debug_info
-        return None, f"文件 {filename} 缺少关键列"
-    
-    # 调试：显示前3行数据的金额
-    if debug and 'sys_amount' in df_mapped.columns:
-        debug_info['前3行金额值'] = df_mapped['sys_amount'].head(3).tolist()
-    
     # --- 数据清洗：过滤空行和汇总行 ---
-    df_mapped = df_mapped[df_mapped['sys_name'].notna()]
-    df_mapped = df_mapped[df_mapped['sys_name'].astype(str).str.strip() != '']
+    # 如果有姓名列，使用姓名列清洗；否则使用第一列
+    filter_col = name_col if name_col else df_raw.columns[0]
+    df_raw = df_raw[df_raw[filter_col].notna()]
+    df_raw = df_raw[df_raw[filter_col].astype(str).str.strip() != '']
     
-    summary_keywords = ['合计', '小计', '总计', '汇总', '总额', '共计']
-    mask = df_mapped['sys_name'].astype(str).str.contains('|'.join(summary_keywords), case=False, na=False)
-    df_mapped = df_mapped[~mask]
+    # 如果有姓名列，过滤汇总行
+    if name_col:
+        summary_keywords = ['合计', '小计', '总计', '汇总', '总额', '共计']
+        mask = df_raw[name_col].astype(str).str.contains('|'.join(summary_keywords), case=False, na=False)
+        df_raw = df_raw[~mask]
     
-    df_mapped['month'] = file_month
-    df_mapped['sys_dept'] = file_dept
-    df_mapped['sys_amount'] = pd.to_numeric(df_mapped['sys_amount'], errors='coerce').fillna(0).round(2)
-    
-    df_mapped = df_mapped[df_mapped['sys_amount'] > 0]
-    df_mapped = df_mapped[df_mapped['sys_amount'] < 500000]
-    
-    cols = [c for c in ['month', 'sys_name', 'sys_id', 'sys_amount', 'sys_dept', 'sys_id_card'] if c in df_mapped.columns]
+    # 在最左边添加固定字段：数据来源、年月份
+    df_raw.insert(0, '数据来源', filename)
+    df_raw.insert(1, '年月份', file_month)
     
     if debug:
-        return df_mapped[cols].reset_index(drop=True), None, debug_info
-    return df_mapped[cols].reset_index(drop=True), None
+        return df_raw.reset_index(drop=True), None, debug_info
+    return df_raw.reset_index(drop=True), None
 
 # --- 页面逻辑分发 ---
 
@@ -293,6 +233,7 @@ elif current_menu == "实发账单合并":
         all_dfs = []
         summary = []
         all_debug_info = []
+        all_columns = set()  # 收集所有字段
         
         for f in files:
             if show_debug:
@@ -307,12 +248,12 @@ elif current_menu == "实发账单合并":
             
             if df is not None:
                 all_dfs.append(df)
+                all_columns.update(df.columns)  # 收集字段
                 summary.append({
                     "文件名": f.name,
-                    "月份": df['month'].iloc[0] if not df.empty else "未知",
-                    "片区": df['sys_dept'].iloc[0] if not df.empty else "未知",
+                    "年月份": df['年月份'].iloc[0] if not df.empty and '年月份' in df.columns else "未知",
                     "总人数": len(df),
-                    "总金额": df['sys_amount'].sum()
+                    "字段数": len(df.columns)
                 })
             else:
                 st.warning(f"跳过 {f.name}: {error}")
@@ -325,8 +266,20 @@ elif current_menu == "实发账单合并":
                     st.json(info)
         
         if all_dfs:
-            df_merged = pd.concat(all_dfs, ignore_index=True)
-            st.success(f"✅ 成功合并 {len(all_dfs)} 个文件，共 {len(df_merged)} 条记录。")
+            # 使用字段并集方式合并：所有表格的字段合并，缺失的留空
+            df_merged = pd.concat(all_dfs, ignore_index=True, sort=False)
+            
+            # 重新排列列顺序：固定字段在前，其他字段在后
+            fixed_cols = ['数据来源', '年月份']
+            other_cols = [c for c in df_merged.columns if c not in fixed_cols]
+            df_merged = df_merged[fixed_cols + other_cols]
+            
+            st.success(f"✅ 成功合并 {len(all_dfs)} 个文件，共 {len(df_merged)} 条记录，{len(df_merged.columns)} 个字段。")
+            
+            # 显示字段并集信息
+            with st.expander("📋 字段并集详情"):
+                st.write(f"共 {len(all_columns)} 个不同字段：")
+                st.write(list(all_columns))
             
             st.subheader("📊 解析摘要")
             st.table(pd.DataFrame(summary))

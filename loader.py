@@ -3,6 +3,10 @@ import os
 import re
 from pathlib import Path
 from typing import List, Tuple
+from logger_config import setup_logger
+
+# 初始化日志记录器
+logger = setup_logger("loader")
 
 class MasterDataLoader:
     def __init__(self, folder_path: str):
@@ -49,7 +53,7 @@ class MasterDataLoader:
         path_list = list(Path(self.folder_path).glob("**/*.xlsx"))
         
         for path in path_list:
-            print(f"Loading: {path}")
+            logger.info(f"Loading: {path}")
             try:
                 # 读取 Excel，确保工号是字符串
                 df = pd.read_excel(path, dtype={'工号': str, '实发金额': float})
@@ -75,7 +79,7 @@ class MasterDataLoader:
                 # 检查必要列
                 missing_cols = [v for v in self.required_columns.values() if v not in df.columns]
                 if 'sys_name' not in df.columns or 'sys_amount' not in df.columns:
-                    print(f"Warning: {path} missing critical columns")
+                    logger.warning(f"Warning: {path} missing critical columns")
                     continue
                 
                 # 3. 数据清洗
@@ -94,7 +98,7 @@ class MasterDataLoader:
                 
                 all_dfs.append(df[final_cols])
             except Exception as e:
-                print(f"Error loading {path}: {e}")
+                logger.error(f"Error loading {path}: {e}")
             
         if not all_dfs:
             return pd.DataFrame(columns=['month', 'sys_dept', 'sys_name', 'sys_id', 'sys_amount', 'sys_uid'])
@@ -166,6 +170,6 @@ if __name__ == "__main__":
     # 测试代码
     loader = MasterDataLoader("data/system_data")
     df = loader.load_all_excel()
-    print(f"Total records loaded: {len(df)}")
+    logger.info(f"Total records loaded: {len(df)}")
     if not df.empty:
-        print(df.head())
+        logger.info(df.head())
